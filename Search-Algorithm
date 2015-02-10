@@ -1,0 +1,179 @@
+import java.io.File;
+import java.io.IOException;
+import java.io.PrintWriter;
+import java.nio.file.Files;
+import java.nio.file.Path;
+import java.nio.file.Paths;
+import java.util.ArrayList;
+import java.util.Collections;
+import java.util.Comparator;
+import java.util.HashMap;
+import java.util.LinkedHashMap;
+import java.util.LinkedHashSet;
+import java.util.LinkedList;
+import java.util.List;
+import java.util.Map;
+import java.util.Set;
+import java.util.Map.Entry;
+
+import org.apache.commons.lang.StringUtils;
+import org.apache.lucene.analysis.Analyzer;
+import org.apache.lucene.analysis.standard.StandardAnalyzer;
+import org.apache.lucene.document.Document;
+import org.apache.lucene.index.AtomicReaderContext;
+import org.apache.lucene.index.DirectoryReader;
+import org.apache.lucene.index.DocsEnum;
+import org.apache.lucene.index.IndexReader;
+import org.apache.lucene.index.MultiFields;
+import org.apache.lucene.index.Term;
+import org.apache.lucene.queryparser.classic.ParseException;
+import org.apache.lucene.queryparser.classic.QueryParser;
+import org.apache.lucene.search.IndexSearcher;
+import org.apache.lucene.search.Query;
+import org.apache.lucene.search.similarities.DefaultSimilarity;
+import org.apache.lucene.store.FSDirectory;
+import org.apache.lucene.util.BytesRef;
+
+
+public class searchTRECtopics {
+	//Main is for getting all short and long queries and it is calling methods
+	//which will create HashMap, store relevant documents score
+	//sort the documents based on relevance score
+	//and print the top1000 documents to a results file in the format required by TREC_EVAL
+	public static void main(String[] args) throws IOException, ParseException{
+		Path path = Paths.get("C:\\Users\\Shreya\\Desktop\\topics.51-100");
+		PrintWriter out = new PrintWriter("C:\\Users\\Shreya\\Desktop\\Ownshortquery.txt","UTF-8");
+		PrintWriter out1 = new PrintWriter("C:\\Users\\Shreya\\Desktop\\Ownlongquery.txt","UTF-8");
+		String hundred = "100";
+		String runshort = "run-1-short";
+		String runlong = "run-1-long";
+		String filetostring = new String(Files.readAllBytes(path));
+		String[] topics = StringUtils.substringsBetween(filetostring, "<top>","</top>");
+		//to get the tags title, query number and description from the file
+		for ( String betweentags : topics)
+		{
+			String num = (StringUtils.substringBetween(betweentags, "Number:", "<")).trim().replaceFirst("0","");
+			if(num.equals("10"))
+			{num=hundred;}
+			String title =(StringUtils.substringBetween(betweentags,"Topic:","<")).trim().replaceAll("[/,?,(,)]"," ");
+			//creating new HashMap which will be passed to the function query1, which runs for every short query
+			Map<String, Float> map1=new HashMap<String, Float>();
+			query1(map1,title,num,out,runshort);
+		}
+		for ( String betweentags : topics)
+		{
+			String num = (StringUtils.substringBetween(betweentags, "Number:", "<")).trim().replaceFirst("0","");
+			if(num.contains("10"))
+			{num=hundred;}
+			String desc=(StringUtils.substringBetween(betweentags, "Description:", "<").trim()).replaceAll("[/,?]"," ");
+			Map<String, Float> map1=new HashMap<String, Float>();
+			//creating new HashMap which will be passed to the function query1, which runs for every long query
+			query1(map1,desc,num,out1,runlong);
+		}
+		out.close();
+		out1.close();
+}
+
+//This function is run for every short and long query(depending on what is passed in the second argument, calculates the Relevance score for the document
+//based on the queries.
+//Also calls SortByComparator method which will sort each HashMap based on the HashMap value(which is Relevance score
+//It then prints the top 1000 results for every query and stores the result in a file
+// first argument - HashMap to store Relevance score for each query
+// second - title(it is description when called for long queries
+// third - query number
+// fourth - Print Writer to write results to a File
+// fifth - this is just a argument to be printed in the Output results file
+	
+public static void query1(Map<String, Float> map1,String title, String num, PrintWriter in, String run) throws IOException, ParseException
+{
+	
+	IndexReader reader = DirectoryReader.open(FSDirectory.open(new File("C:\\Users\\Shreya\\Desktop\\default1")));
+	IndexSearcher searcher = new IndexSearcher(reader);
+	Analyzer analyzer = new StandardAnalyzer();
+	QueryParser parser = new QueryParser("TEXT", analyzer);
+	Query query = parser.parse(title);
+	Set<Term> queryTerms = new LinkedHashSet<Term>();
+	query.extractTerms(queryTerms);
+	DefaultSimilarity dSimi=new DefaultSimilarity();
+	List<AtomicReaderContext> leafContexts = reader.getContext().reader().leaves();
+	float total = reader.maxDoc();
+	//For each query term
+	for (Term t : queryTerms) 
+	{
+	 float R=0;
+	 //For every leaf Context
+	 for (int i = 0; i < leafContexts.size() ; i++) 
+	 {
+		 	AtomicReaderContext leafContext=leafContexts.get(i);
+		 	int startDocNo=(leafContext.docBase);
+		 	int doc;
+		 	DocsEnum de = MultiFields.getTermDocsEnum(leafContext.reader(),MultiFields.getLiveDocs(leafContext.reader()),"TEXT", new BytesRef(t.text()));
+		 	//For every document 
+		 	while ((de!= null && (doc = de.nextDoc()) != DocsEnum.NO_MORE_DOCS)) 
+		 	{ 
+		 		int docno = de.docID()+startDocNo;
+		 		float normDocLeng=dSimi.decodeNormValue(leafContext.reader().getNormValues("TEXT").get(de.docID()));
+		 		Document indexDoc = searcher.doc(docno);
+		 		String newdocno = indexDoc.get("DOCNO");
+		 		float count = de.freq();
+		 		float length = normDocLeng;
+				float TF = (count / length);
+				float IDF =  (float) Math.log10((1 + (reader.maxDoc()/reader.docFreq(new Term("TEXT",t.text())))));
+				//Hashmap key contains DOCNO+title+querynumber, all separated by special characters, because later key is split
+				//and each item separately is used for printing different columns in the Results file for TREC_EVAL
+				
+				String key = ('d'+newdocno+'d')+('#'+title+'#')+('$'+num+'$');
+				//This is because if an entry already exists for a query term in a particular query, 
+				//then we are adding new Relevance score to the already existing one
+				
+				if(map1.containsKey(key)){
+					map1.put(key, map1.get(key)+(TF*IDF));
+				}//if
+				//or else, just creating a new entry in the HashMap
+				else{map1.put(key, ((TF*IDF)));}
+		 	}//while
+	} //leaf
+   }//query term
+	
+	//This Hashmap is used to store the sorted HashMap
+	Map<String, Float> sorted;
+	sorted = sortByValue(map1);
+
+	//After sorting, we want to print only top 1000 ranking entries to the file
+	int j=0;
+	for (Entry<String, Float> entry1 : sorted.entrySet())
+	{	
+			String docid = StringUtils.substringBetween(entry1.getKey(),"d","d");
+			String querynumber = StringUtils.substringBetween(entry1.getKey(),"$","$");
+			in.println(querynumber + " Q0 "+docid+" "+(j=j+1)+" "+entry1.getValue()+" "+run);
+			if(j==1000){break;}
+    }//ending print statement
+	reader.close();
+}
+
+
+//This method sorts HashMap based on the values, rather than Key
+//It takes one argument- HashMap which should be sorted
+//Referred logic for this method from "Stack Overflow"
+
+	public static Map<String, Float> sortByValue(Map<String, Float> RevDoc)
+	{
+		List<Entry<String, Float>> list = new LinkedList<Entry<String, Float>>(RevDoc.entrySet());
+		 Collections.sort(list, new Comparator<Entry<String, Float>>()
+			        {
+			            public int compare(Entry<String, Float> o1,Entry<String, Float> o2)
+			            {
+			            	return o2.getValue().compareTo(o1.getValue());
+			            }
+			        });
+		 Map<String, Float> sortedMap = new LinkedHashMap<String, Float>();
+	        for (Entry<String, Float> entry : list)
+	        {
+	            sortedMap.put(entry.getKey(), entry.getValue());
+	        }
+
+		return sortedMap;
+	}//ending comparator
+	
+	
+}//ending class
